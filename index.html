@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Live Camera Puzzle & Gesture Controller</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet">
+<!-- MediaPipe Hands & Camera Utils -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+
+<style>
+  :root {
+    --lime: #c6ff2e;
+    --lime-dim: rgba(198, 255, 46, 0.15);
+    --bg: #07060d;
+    --panel: rgba(22, 22, 29, 0.88);
+    --panel-border: rgba(255, 255, 255, 0.12);
+    --danger: #ff5d5d;
+    --cyan: #38ef7d;
+  }
+  
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  
+  body {
+    background: var(--bg);
+    color: #fff;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    overflow-x: hidden;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 14px;
+  }
+
+  h1 {
+    color: var(--lime);
+    font-size: clamp(20px, 4vw, 26px);
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    text-shadow: 0 0 15px rgba(198, 255, 46, 0.3);
+  }
+
+  .sub {
+    color: #9d9dae;
+    font-size: clamp(11px, 2.5vw, 13px);
+    margin-top: 4px;
+    letter-spacing: 0.05em;
+  }
+
+  #stage {
+    position: relative;
+    width: min(1080px, 100%);
+    aspect-ratio: 16/9;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #0d0c14;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--panel-border);
+  }
+
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+  }
+
+  video { display: none; }
+
+  /* Controls & Overlays */
+  .pill {
+    position: absolute;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(12px);
+    border-radius: 999px;
+    font-size: 11px;
+    padding: 8px 16px;
+    color: #fff;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 10;
+  }
+  
+  .pill:hover {
+    background: rgba(40, 40, 52, 0.95);
+    border-color: var(--lime);
+    color: var(--lime);
+  }
+
+  #lbBtn { top: 16px; left: 16px; }
+  #lbBtn b { color: var(--lime); }
+  
+  #timer {
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--lime);
+    letter-spacing: 0.1em;
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+  }
+
+  #resetBtn {
+    bottom: 16px;
+    left: 16px;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+    font-size: 16px;
+    border-radius: 50%;
+  }
+
+  #hint {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(12px);
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 11px;
+    line-height: 1.6;
+    text-align: right;
+    max-width: 260px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  
+  #hint .ph {
+    color: var(--lime);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+    font-size: 12px;
+  }
+
+  #status {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    font-size: 11px;
+    color: #ffffffaa;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 10px;
+    border-radius: 20px;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #sizes {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+  }
+  
+  #sizes .pill { position: static; }
+  #sizes .pill.on {
+    background: var(--lime);
+    color: #111;
+    font-weight: 800;
+    border-color: var(--lime);
+  }
+
+  /* Modals */
+  .modal {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    z-index: 30;
+    animation: fadeIn 0.25s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .card {
+    text-align: center;
+    background: rgba(18, 18, 24, 0.95);
+    border: 1px solid var(--panel-border);
+    padding: 28px 36px;
+    border-radius: 18px;
+    min-width: 310px;
+    box-shadow: 0 25px 50px rgba(0,0,0,0.8);
+  }
+
+  .card .big {
+    color: var(--lime);
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+  }
+
+  .card .time {
+    font-size: 28px;
+    margin: 12px 0 20px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .card form {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .card input {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-family: inherit;
+    width: 170px;
+    font-size: 13px;
+    outline: none;
+    text-transform: uppercase;
+  }
+  
+  .card input:focus {
+    border-color: var(--lime);
+  }
+
+  .card button, #lb button.close {
+    background: var(--lime);
+    color: #111;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-family: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.1s ease, background 0.2s ease;
+  }
+  
+  .card button:hover {
+    transform: scale(1.03);
+    background: #d4ff55;
+  }
+
+  #lb h2 {
+    color: var(--lime);
+    font-size: 16px;
+    letter-spacing: 0.12em;
+    margin-bottom: 16px;
+  }
+
+  #lb ol {
+    padding-left: 20px;
+    font-size: 13px;
+    line-height: 2.2;
+    text-align: left;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  #lb ol span {
+    float: right;
+    margin-left: 30px;
+    color: var(--lime);
+    font-weight: 700;
+  }
+
+  #lb .close { margin-top: 18px; width: 100%; }
+
+  #msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    background: rgba(7, 6, 13, 0.92);
+    font-size: 14px;
+    padding: 30px;
+    z-index: 20;
+    gap: 12px;
+  }
+
+  .spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid rgba(198,255,46,0.2);
+    border-top-color: var(--lime);
+    border-radius: 50%;
+    animation: spin 1s infinite linear;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Mode Switch Toggle */
+  #modeToggle {
+    top: 16px;
+    left: 175px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Live Gesture Puzzle</h1>
+  <div class="sub">Frame with both hands &amp; pinch to snap. Drag &amp; drop to swap.</div>
+</header>
+
+<div id="stage">
+  <video id="cam" playsinline muted></video>
+  <canvas id="cv" width="1280" height="720"></canvas>
+
+  <button class="pill" id="lbBtn"><b>&#9776;</b> RANKINGS</button>
+  <button class="pill" id="modeToggle">MODE: HANDS</button>
+  
+  <div class="pill" id="timer">&#9201; 0:00</div>
+  <div id="hint"></div>
+  <button class="pill" id="resetBtn" title="Reset Game">&#8635;</button>
+  <div id="status">Initializing camera...</div>
+
+  <div id="sizes"></div>
+
+  <!-- Completion Modal -->
+  <div id="done" class="modal">
+    <div class="card">
+      <div class="big">PUZZLE SOLVED!</div>
+      <div class="time" id="doneTime">0:00</div>
+      <form id="nameForm">
+        <input id="nameIn" maxlength="14" placeholder="PLAYER NAME" required autocomplete="off">
+        <button type="submit">SUBMIT</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Leaderboard Modal -->
+  <div id="lb" class="modal">
+    <div class="card">
+      <h2 id="lbTitle">LEADERBOARD</h2>
+      <ol id="lbList"></ol>
+      <button class="close">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- Loading Message -->
+  <div id="msg">
+    <div class="spinner"></div>
+    <div id="msgText">Loading camera &amp; hand tracking module...</div>
+  </div>
+</div>
+
+<script>
+// ---------- AUDIO SYSTEM (Web Audio API) ----------
+class SoundEffects {
+  constructor() {
+    this.ctx = null;
+  }
+  init() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+  }
+  playSnap() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.15);
+  }
+  playPickup() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.08);
+  }
+  playSwap() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.1);
+  }
+  playWin() {
+    if (!this.ctx) return;
+    const notes = [523.25, 659.25, 783.99, 1046.50];
+    notes.forEach((freq, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, this.ctx.currentTime + i * 0.1);
+      gain.gain.setValueAtTime(0.3, this.ctx.currentTime + i * 0.1);
+      gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + i * 0.1 + 0.3);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(this.ctx.currentTime + i * 0.1);
+      osc.stop(this.ctx.currentTime + i * 0.1 + 0.3);
+    });
+  }
+}
+const sfx = new SoundEffects();
+
+// ---------- CONSTANTS & DOM ----------
+const W = 1280, H = 720;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const cam = document.getElementById('cam');
+const $ = id => document.getElementById(id);
+const LIME = '#c6ff2e';
+
+// Off-screen canvas for crisp video capture framing
+const vcan = document.createElement('canvas'); vcan.width = W; vcan.height = H;
+const vctx = vcan.getContext('2d');
+
+const BONES = [
+  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],
+  [15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
+];
+
+// ---------- GAME STATE ----------
+let N = 3;
+const SIZES = [3, 4, 5];
+let controlMode = 'hands'; // 'hands' | 'mouse'
+
+function buildSizes() {
+  const box = $('sizes'); box.innerHTML = '';
+  SIZES.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'pill' + (s === N ? ' on' : '');
+    b.textContent = s + 'x' + s;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      sfx.init();
+      N = s; reset(); buildSizes();
+    };
+    box.appendChild(b);
+  });
+}
+
+let phase = 'capture';           // 'capture' | 'play' | 'done'
+let snap = null, grid = null;    // crop canvas, grid position {x,y,w,h}
+let tiles = [];                  // current state mapping position -> original index
+let drag = null;                 // tile being dragged {pos, val}
+let startTime = 0, elapsed = 0;
+let capHold = 0, lostFrames = 0;
+const pinchState = [false, false];
+let ptr = { x: W / 2, y: H / 2 };
+let isMouseDown = false;
+
+const hints = {
+  capture: ['PHASE 1: CAPTURE', '1. Frame image using 2 hands', '2. Pinch BOTH hands to capture!'],
+  play:    ['PHASE 2: SOLVE',   '1. Pinch to pick up a tile', '2. Drag over target tile', '3. Release to SWAP']
+};
+
+function setHint(p) {
+  const h = hints[p];
+  $('hint').innerHTML = `<div class="ph">${h[0]}</div>` + h.slice(1).join('<br>');
+}
+
+// ---------- HELPERS ----------
+const pt = (lm, i) => ({ x: (1 - lm[i].x) * W, y: lm[i].y * H });
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+function pinchInfo(lm, idx) {
+  const t = pt(lm, 4), i = pt(lm, 8); // Thumb tip & Index tip
+  const size = dist(pt(lm, 0), pt(lm, 9)) || 1; // Wrist to MCP joint scale
+  const ratio = dist(t, i) / size;
+  
+  // Smooth hysteresis filter for pinch recognition
+  if (pinchState[idx]) {
+    if (ratio > 0.45) pinchState[idx] = false;
+  } else {
+    if (ratio < 0.28) pinchState[idx] = true;
+  }
+  return { pinching: pinchState[idx], x: (t.x + i.x) / 2, y: (t.y + i.y) / 2 };
+}
+
+function fmt(s) {
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return m + ':' + String(r).padStart(2, '0');
+}
+
+function shuffle() {
+  let a;
+  do {
+    a = [...Array(N * N).keys()];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+  } while (a.every((v, i) => v === i)); // Avoid starting solved
+  return a;
+}
+
+function cellAt(x, y) {
+  if (!grid || x < grid.x || y < grid.y || x >= grid.x + grid.w || y >= grid.y + grid.h) return -1;
+  const c = Math.floor((x - grid.x) / (grid.w / N));
+  const r = Math.floor((y - grid.y) / (grid.h / N));
+  return r * N + c;
+}
+
+function drawTile(val, x, y, w, h) {
+  const sw = grid.w / N, sh = grid.h / N;
+  const sx = (val % N) * sw, sy = Math.floor(val / N) * sh;
+  ctx.drawImage(snap, sx, sy, sw, sh, x, y, w, h);
+}
+
+function drawHand(lm, isPinching) {
+  // Skeleton connections
+  ctx.strokeStyle = isPinching ? LIME : 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (const [a, b] of BONES) {
+    const p = pt(lm, a), q = pt(lm, b);
+    ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+  }
+  ctx.stroke();
+
+  // Joint nodes
+  for (let i = 0; i < 21; i++) {
+    const p = pt(lm, i);
+    ctx.fillStyle = (i === 4 || i === 8) ? LIME : '#fff';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, (i === 4 || i === 8) ? 6 : 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function label(text, x, y) {
+  ctx.font = '700 14px "JetBrains Mono", monospace';
+  ctx.fillStyle = LIME;
+  ctx.textBaseline = 'bottom';
+  const margin = 8;
+  const metrics = ctx.measureText(text);
+  ctx.fillStyle = 'rgba(10, 10, 15, 0.85)';
+  ctx.fillRect(x - 4, y - 20, metrics.width + 12, 24);
+  ctx.fillStyle = LIME;
+  ctx.fillText(text, x, y - 2);
+}
+
+// ---------- PROCESS FRAME ----------
+function onResults(res) {
+  $('msg').style.display = 'none';
+
+  // Draw camera feed mirrored
+  vctx.save();
+  vctx.translate(W, 0);
+  vctx.scale(-1, 1);
+  vctx.drawImage(res.image, 0, 0, W, H);
+  vctx.restore();
+  ctx.drawImage(vcan, 0, 0);
+
+  const hands = res.multiHandLandmarks || [];
+  const infos = hands.map((lm, i) => pinchInfo(lm, i));
+  for (let i = hands.length; i < 2; i++) pinchState[i] = false;
+
+  if (controlMode === 'hands') {
+    if (phase === 'capture') captureStep(hands, infos);
+    else if (phase === 'play') playStep(hands, infos);
+    else drawPuzzle();
+
+    hands.forEach((lm, i) => drawHand(lm, infos[i]?.pinching));
+    $('status').textContent = hands.length + (hands.length === 1 ? ' hand' : ' hands') + ' active';
+  } else {
+    // Mouse / Touch fallback mode logic
+    if (phase === 'capture') mouseCaptureStep();
+    else if (phase === 'play') mousePlayStep();
+    else drawPuzzle();
+    $('status').textContent = 'Mouse/Touch Mode Active';
+  }
+}
+
+// ---------- HAND GESTURE LOGIC ----------
+function captureStep(hands, infos) {
+  if (hands.length < 2) {
+    capHold = 0;
+    label('POSITION BOTH HANDS TO FRAME', 40, H - 30);
+    return;
+  }
+  const a = infos[0], b = infos[1];
+  const r = {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    w: Math.abs(a.x - b.x),
+    h: Math.abs(a.y - b.y)
+  };
+  const ok = r.w > 200 && r.h > 150;
+
+  ctx.strokeStyle = ok ? (a.pinching && b.pinching ? LIME : '#38ef7d') : varColor('--danger');
+  ctx.lineWidth = 4;
+  ctx.setLineDash(a.pinching && b.pinching ? [] : [10, 6]);
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  ctx.setLineDash([]);
+
+  label(!ok ? 'EXPAND FRAME AREA' : (a.pinching && b.pinching ? 'HOLDING... SNAP!' : 'PINCH BOTH HANDS TO CAPTURE'), r.x, r.y - 8);
+
+  if (ok && a.pinching && b.pinching) {
+    capHold++;
+    ctx.fillStyle = 'rgba(198, 255, 46, ' + Math.min(0.4, capHold / 15) + ')';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    if (capHold >= 12) {
+      sfx.playSnap();
+      startPuzzle(r);
+    }
+  } else {
+    capHold = 0;
+  }
+}
+
+function startPuzzle(r) {
+  grid = {
+    x: Math.round(r.x),
+    y: Math.round(r.y),
+    w: Math.round(r.w / N) * N,
+    h: Math.round(r.h / N) * N
+  };
+  snap = document.createElement('canvas');
+  snap.width = grid.w; snap.height = grid.h;
+  snap.getContext('2d').drawImage(vcan, grid.x, grid.y, grid.w, grid.h, 0, 0, grid.w, grid.h);
+
+  tiles = shuffle();
+  drag = null;
+  capHold = 0;
+  phase = 'play';
+  startTime = performance.now();
+  elapsed = 0;
+
+  setHint('play');
+  $('timer').style.display = 'flex';
+}
+
+function playStep(hands, infos) {
+  elapsed = (performance.now() - startTime) / 1000;
+  $('timer').textContent = '⏱ ' + fmt(elapsed);
+
+  // Focus on pinching hand or primary hand
+  const h = infos.find(i => i.pinching) || infos[0];
+  if (h) {
+    lostFrames = 0;
+    // Smooth pointer motion
+    ptr.x += (h.x - ptr.x) * 0.4;
+    ptr.y += (h.y - ptr.y) * 0.4;
+
+    if (!drag && h.pinching) {
+      const c = cellAt(ptr.x, ptr.y);
+      if (c >= 0) {
+        drag = { pos: c, val: tiles[c] };
+        sfx.playPickup();
+      }
+    } else if (drag && !h.pinching) {
+      const c = cellAt(ptr.x, ptr.y);
+      if (c >= 0 && c !== drag.pos) {
+        [tiles[c], tiles[drag.pos]] = [tiles[drag.pos], tiles[c]];
+        sfx.playSwap();
+      }
+      drag = null;
+      if (tiles.every((v, i) => v === i)) return finish();
+    }
+  } else if (++lostFrames > 15) {
+    drag = null;
+  }
+
+  drawPuzzle(h ? cellAt(ptr.x, ptr.y) : -1);
+}
+
+// ---------- MOUSE/TOUCH FALLBACK LOGIC ----------
+function mouseCaptureStep() {
+  const r = { x: W * 0.25, y: H * 0.15, w: W * 0.5, h: H * 0.7 };
+  ctx.strokeStyle = LIME;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  label('CLICK ANYWHERE TO SNAP FRAME', r.x, r.y - 8);
+
+  if (isMouseDown) {
+    sfx.playSnap();
+    startPuzzle(r);
+    isMouseDown = false;
+  }
+}
+
+function mousePlayStep() {
+  elapsed = (performance.now() - startTime) / 1000;
+  $('timer').textContent = '⏱ ' + fmt(elapsed);
+
+  const hoverCell = cellAt(ptr.x, ptr.y);
+  drawPuzzle(hoverCell);
+}
+
+// ---------- DRAW PUZZLE BOARD ----------
+function drawPuzzle(hover = -1) {
+  if (!grid) return;
+  const tw = grid.w / N, th = grid.h / N;
+
+  // Background frame slot
+  ctx.fillStyle = '#08080e';
+  ctx.fillRect(grid.x, grid.y, grid.w, grid.h);
+
+  for (let p = 0; p < N * N; p++) {
+    if (drag && p === drag.pos) continue; // Slot hole for dragged tile
+    drawTile(tiles[p], grid.x + (p % N) * tw, grid.y + Math.floor(p / N) * th, tw, th);
+  }
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i <= N; i++) {
+    ctx.beginPath();
+    ctx.moveTo(grid.x + i * tw, grid.y);
+    ctx.lineTo(grid.x + i * tw, grid.y + grid.h);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(grid.x, grid.y + i * th);
+    ctx.lineTo(grid.x + grid.w, grid.y + i * th);
+    ctx.stroke();
+  }
+
+  // Hover highlight
+  if (hover >= 0 && !drag) {
+    ctx.strokeStyle = LIME;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(grid.x + (hover % N) * tw, grid.y + Math.floor(hover / N) * th, tw, th);
+  }
+
+  // Dragging tile thumbnail floating under pointer
+  if (drag) {
+    const x = ptr.x - tw / 2, y = ptr.y - th / 2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 15;
+    drawTile(drag.val, x, y, tw, th);
+    ctx.strokeStyle = LIME;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, tw, th);
+    ctx.restore();
+
+    // Floating pointer cursor indicator
+    ctx.fillStyle = LIME;
+    ctx.beginPath();
+    ctx.arc(ptr.x, ptr.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function varColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// ---------- GAME STATE & LEADERBOARD ----------
+function finish() {
+  phase = 'done';
+  drag = null;
+  sfx.playWin();
+  $('doneTime').textContent = '⏱ ' + fmt(elapsed);
+  $('done').style.display = 'flex';
+  $('nameIn').focus();
+  drawPuzzle();
+}
+
+const key = () => 'livepuzzle_scores_' + N;
+const loadScores = () => {
+  try { return JSON.parse(localStorage.getItem(key()) || '[]'); }
+  catch { return []; }
+};
+
+function saveScore(name, t) {
+  const s = loadScores();
+  s.push({ name, t });
+  s.sort((a, b) => a.t - b.t);
+  try { localStorage.setItem(key(), JSON.stringify(s.slice(0, 10))); } catch {}
+}
+
+function renderLb() {
+  $('lbTitle').textContent = 'LEADERBOARD ' + N + 'x' + N;
+  const s = loadScores();
+  $('lbList').innerHTML = s.length
+    ? s.map(e => `<li>${e.name.replace(/[<>&]/g, '')} <span>${fmt(e.t)}</span></li>`).join('')
+    : '<li style="list-style:none;color:#8d8d99;text-align:center;">No records yet. Be first!</li>';
+}
+
+function reset() {
+  phase = 'capture';
+  snap = grid = null;
+  drag = null;
+  capHold = 0;
+  $('done').style.display = 'none';
+  $('timer').style.display = 'none';
+  setHint('capture');
+}
+
+// Event Bindings
+$('nameForm').onsubmit = e => {
+  e.preventDefault();
+  sfx.init();
+  saveScore(($('nameIn').value.trim() || 'ANONYMOUS').toUpperCase(), elapsed);
+  $('nameIn').value = '';
+  reset();
+  renderLb();
+  $('lb').style.display = 'flex';
+};
+
+$('lbBtn').onclick = (e) => {
+  e.stopPropagation();
+  sfx.init();
+  renderLb();
+  $('lb').style.display = 'flex';
+};
+
+$('lb').querySelector('.close').onclick = () => $('lb').style.display = 'none';
+$('resetBtn').onclick = (e) => {
+  e.stopPropagation();
+  sfx.init();
+  reset();
+};
+
+$('modeToggle').onclick = (e) => {
+  e.stopPropagation();
+  sfx.init();
+  controlMode = controlMode === 'hands' ? 'mouse' : 'hands';
+  $('modeToggle').textContent = 'MODE: ' + controlMode.toUpperCase();
+};
+
+// Pointer Events Fallback for Direct Mouse/Touch Interaction
+function getCanvasCoords(e) {
+  const rect = cv.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return {
+    x: (clientX - rect.left) * (W / rect.width),
+    y: (clientY - rect.top) * (H / rect.height)
+  };
+}
+
+cv.addEventListener('pointerdown', e => {
+  sfx.init();
+  const p = getCanvasCoords(e);
+  ptr.x = p.x; ptr.y = p.y;
+  isMouseDown = true;
+
+  if (controlMode === 'mouse' && phase === 'play') {
+    const c = cellAt(ptr.x, ptr.y);
+    if (c >= 0) {
+      drag = { pos: c, val: tiles[c] };
+      sfx.playPickup();
+    }
+  }
+});
+
+cv.addEventListener('pointermove', e => {
+  const p = getCanvasCoords(e);
+  ptr.x = p.x; ptr.y = p.y;
+});
+
+cv.addEventListener('pointerup', () => {
+  isMouseDown = false;
+  if (controlMode === 'mouse' && phase === 'play' && drag) {
+    const c = cellAt(ptr.x, ptr.y);
+    if (c >= 0 && c !== drag.pos) {
+      [tiles[c], tiles[drag.pos]] = [tiles[drag.pos], tiles[c]];
+      sfx.playSwap();
+    }
+    drag = null;
+    if (tiles.every((v, i) => v === i)) finish();
+  }
+});
+
+// ---------- INITIALIZATION ----------
+async function boot() {
+  buildSizes();
+  setHint('capture');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, facingMode: 'user' },
+      audio: false
+    });
+    cam.srcObject = stream;
+    await cam.play();
+  } catch (e) {
+    console.warn("Camera blocked or unavailable, switching to Mouse mode.", e);
+    $('msgText').textContent = 'Camera unavailable. Switched to Mouse/Touch mode!';
+    controlMode = 'mouse';
+    $('modeToggle').textContent = 'MODE: MOUSE';
+    setTimeout(() => { $('msg').style.display = 'none'; }, 2000);
+  }
+
+  // Initialize MediaPipe Hands
+  const hands = new Hands({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`
+  });
+
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+  });
+
+  hands.onResults(onResults);
+
+  // Camera Utility Loop
+  if (cam.srcObject) {
+    const camera = new Camera(cam, {
+      onFrame: async () => {
+        await hands.send({ image: cam });
+      },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+  } else {
+    // Render loop if no camera stream present
+    function loop() {
+      onResults({ image: cam });
+      requestAnimationFrame(loop);
+    }
+    loop();
+  }
+}
+
+window.onload = boot;
+</script>
+</body>
+</html>
